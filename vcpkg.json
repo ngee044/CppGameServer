@@ -1,0 +1,33 @@
+{
+    "dependencies": [
+      "lz4",
+      "fmt",
+      "cryptopp",
+      "gtest",
+      "libpq",
+      "efsw",
+      {
+        "name": "redis-plus-plus",
+        "features": [
+          "cxx17",
+          "tls"
+        ]
+      },
+      "boost-algorithm",
+      "boost-dll",
+      "boost-asio",
+      "boost-json",
+      "boost-system",
+      "boost-container",
+      "boost-filesystem",
+      "libplist",
+      "boost-process",
+      "curl",
+      "librabbitmq",
+      "modern-cpp-kafka",
+      "openssl",
+      "nanodbc",
+      "zlib",
+      "glm"
+    ]
+  }
