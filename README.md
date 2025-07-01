@@ -262,15 +262,9 @@ CppGameServer/
 - Secure authentication system (planned)
 
 ## 🗺️ Roadmap
-
-- [ ] WebSocket support
-- [ ] Enhanced matchmaking service
-- [ ] Advanced game room management
 - [ ] Real-time chat service
-- [ ] Leaderboard and ranking system
 - [ ] Docker containerization
 - [ ] Kubernetes deployment configuration
-- [ ] Comprehensive API documentation
 
 ## 📝 License
 
