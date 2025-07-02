@@ -22,9 +22,12 @@ project(${PROJECT_NAME} VERSION 1.0.0.0)
 
 add_subdirectory(.CppToolkit)
 
+#add_subdirectory(CommonMessageMQ)
+#add_subdirectory(GameLogic)
 add_subdirectory(DummyClient)
-add_subdirectory(DummyClientManager)
 add_subdirectory(InfraService)
+add_subdirectory(CacheDBService)
+add_subdirectory(MainDBService)
 add_subdirectory(MainService)
 
 
