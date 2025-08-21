@@ -1,3 +1,13 @@
 {
-    
+	"rabbit_host": "127.0.0.1",
+	"rabbit_port": 5672,
+	"rabbit_user": "guest",
+	"rabbit_password": "guest",
+	"rabbit_heartbeat": 60,
+	"rabbit_channel_id": 1,
+	"rabbit_queue": "db.write",
+
+	"postgres_conn": "host=127.0.0.1 port=5432 dbname=game user=postgres password=postgres",
+	"allowed_ops": ["insert", "update", "delete", "exec"],
+	"allowed_tables": []
 }

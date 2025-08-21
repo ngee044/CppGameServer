@@ -1,0 +1,116 @@
+// Simplified configurations tailored for MainDBService
+
+#include "Configurations.h"
+
+#include "File.h"
+#include "Logger.h"
+#include "Converter.h"
+
+#include "fmt/xchar.h"
+#include "fmt/format.h"
+
+#include "boost/json.hpp"
+#include "boost/json/parse.hpp"
+
+#include <filesystem>
+
+Configurations::Configurations(ArgumentParser&& arguments)
+	: root_path_("")
+	, rabbit_mq_host_("127.0.0.1")
+	, rabbit_mq_port_(5672)
+	, rabbit_mq_user_name_("guest")
+	, rabbit_mq_password_("guest")
+	, rabbit_heartbeat_(60)
+	, rabbit_channel_id_(1)
+	, consume_queue_name_("db.write")
+	, postgres_conn_("host=127.0.0.1 port=5432 dbname=game user=postgres password=postgres")
+{
+	root_path_ = arguments.program_folder();
+	load();
+	parse(arguments);
+}
+
+Configurations::~Configurations(void) {}
+
+auto Configurations::rabbit_mq_host() const -> std::string { return rabbit_mq_host_; }
+auto Configurations::rabbit_mq_port() const -> int { return rabbit_mq_port_; }
+auto Configurations::rabbit_mq_user_name() const -> std::string { return rabbit_mq_user_name_; }
+auto Configurations::rabbit_mq_password() const -> std::string { return rabbit_mq_password_; }
+auto Configurations::rabbit_heartbeat() const -> int { return rabbit_heartbeat_; }
+auto Configurations::rabbit_channel_id() const -> int { return rabbit_channel_id_; }
+auto Configurations::consume_queue_name() const -> std::string { return consume_queue_name_; }
+auto Configurations::postgres_conn() const -> std::string { return postgres_conn_; }
+auto Configurations::allowed_ops() const -> const std::vector<std::string>& { return allowed_ops_; }
+auto Configurations::allowed_tables() const -> const std::vector<std::string>& { return allowed_tables_; }
+
+auto Configurations::load() -> void
+{
+	std::filesystem::path path = root_path_ + "main_db_service_cfg.json";
+	if (!std::filesystem::exists(path))
+	{
+		Logger::handle().write(LogTypes::Error, fmt::format("Configurations file does not exist: {}", path.string()));
+		return;
+	}
+
+	File source;
+	source.open(fmt::format("{}main_db_service_cfg.json", root_path_), std::ios::in | std::ios::binary, std::locale(""));
+	auto [source_data, error_message] = source.read_bytes();
+	if (source_data == std::nullopt)
+	{
+		Logger::handle().write(LogTypes::Error, error_message.value());
+		return;
+	}
+
+	boost::json::object message = boost::json::parse(Converter::to_string(source_data.value())).as_object();
+
+	// Accept both short and long key names for compatibility
+	if (message.contains("rabbit_host")) rabbit_mq_host_ = message.at("rabbit_host").as_string().data();
+	else if (message.contains("rabbit_mq_host")) rabbit_mq_host_ = message.at("rabbit_mq_host").as_string().data();
+
+	if (message.contains("rabbit_port")) rabbit_mq_port_ = static_cast<int>(message.at("rabbit_port").as_int64());
+	else if (message.contains("rabbit_mq_port")) rabbit_mq_port_ = static_cast<int>(message.at("rabbit_mq_port").as_int64());
+
+	if (message.contains("rabbit_user")) rabbit_mq_user_name_ = message.at("rabbit_user").as_string().data();
+	else if (message.contains("rabbit_mq_user_name")) rabbit_mq_user_name_ = message.at("rabbit_mq_user_name").as_string().data();
+
+	if (message.contains("rabbit_password")) rabbit_mq_password_ = message.at("rabbit_password").as_string().data();
+	else if (message.contains("rabbit_mq_password")) rabbit_mq_password_ = message.at("rabbit_mq_password").as_string().data();
+
+	if (message.contains("rabbit_heartbeat")) rabbit_heartbeat_ = static_cast<int>(message.at("rabbit_heartbeat").as_int64());
+	if (message.contains("rabbit_channel_id")) rabbit_channel_id_ = static_cast<int>(message.at("rabbit_channel_id").as_int64());
+
+	if (message.contains("rabbit_queue")) consume_queue_name_ = message.at("rabbit_queue").as_string().data();
+	else if (message.contains("consume_queue_name")) consume_queue_name_ = message.at("consume_queue_name").as_string().data();
+
+	if (message.contains("postgres_conn")) postgres_conn_ = message.at("postgres_conn").as_string().data();
+
+	if (message.contains("allowed_ops") && message.at("allowed_ops").is_array())
+	{
+		allowed_ops_.clear();
+		for (auto& v : message.at("allowed_ops").as_array())
+		{
+			allowed_ops_.push_back(boost::json::value_to<std::string>(v));
+		}
+	}
+	if (message.contains("allowed_tables") && message.at("allowed_tables").is_array())
+	{
+		allowed_tables_.clear();
+		for (auto& v : message.at("allowed_tables").as_array())
+		{
+			allowed_tables_.push_back(boost::json::value_to<std::string>(v));
+		}
+	}
+}
+
+auto Configurations::parse(ArgumentParser& arguments) -> void
+{
+	// Optional CLI overrides
+	if (auto v = arguments.to_string("--rabbit_mq_host"); v != std::nullopt) rabbit_mq_host_ = v.value();
+	if (auto v = arguments.to_int("--rabbit_mq_port"); v != std::nullopt) rabbit_mq_port_ = v.value();
+	if (auto v = arguments.to_string("--rabbit_mq_user_name"); v != std::nullopt) rabbit_mq_user_name_ = v.value();
+	if (auto v = arguments.to_string("--rabbit_mq_password"); v != std::nullopt) rabbit_mq_password_ = v.value();
+	if (auto v = arguments.to_int("--rabbit_heartbeat"); v != std::nullopt) rabbit_heartbeat_ = v.value();
+	if (auto v = arguments.to_int("--rabbit_channel_id"); v != std::nullopt) rabbit_channel_id_ = v.value();
+	if (auto v = arguments.to_string("--consume_queue_name"); v != std::nullopt) consume_queue_name_ = v.value();
+	if (auto v = arguments.to_string("--postgres_conn"); v != std::nullopt) postgres_conn_ = v.value();
+}
