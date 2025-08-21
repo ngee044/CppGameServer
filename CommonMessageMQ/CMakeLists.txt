@@ -17,4 +17,4 @@ add_library(${LIBRARY_NAME} ${HEADER_FILES} ${SOURCE_FILES})
 find_package(Boost REQUIRED COMPONENTS json)
 
 target_include_directories(${LIBRARY_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(${LIBRARY_NAME} PUBLIC Boost::json Utilities Thread GameNetwork GameDatabase RabbitMQ)
+target_link_libraries(${LIBRARY_NAME} PUBLIC Boost::json Utilities Thread RabbitMQ)
