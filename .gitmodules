@@ -1,4 +1,4 @@
 [submodule ".CppToolkit"]
 	path = .CppToolkit
 	url = https://github.com/ngee044/CppToolkit.git
-	branch = GameServer-CPPToolKit
+	branch = main
