@@ -10,6 +10,31 @@ DbJobExecutor::DbJobExecutor(PostgresDB& db,
 	, allowed_tables_(allowed_tables)
 {}
 
+auto DbJobExecutor::is_safe_identifier(const std::string& ident) const -> bool
+{
+    if (ident.empty())
+    {
+        return false;
+    }
+    // First char: A-Za-z_
+    auto c0 = ident[0];
+    auto is_alpha = (c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z') || c0 == '_';
+    if (!is_alpha)
+    {
+        return false;
+    }
+    for (size_t i = 1; i < ident.size(); ++i)
+    {
+        char c = ident[i];
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        if (!ok)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 auto DbJobExecutor::handle_message(const std::string& message) -> std::tuple<bool, std::optional<std::string>>
 {
 	auto v = boost::json::parse(message);
@@ -61,6 +86,7 @@ auto DbJobExecutor::to_sql(const boost::json::object& obj) -> std::tuple<bool, s
 	{
 		auto op = boost::json::value_to<std::string>(obj.at("op"));
 		auto table = boost::json::value_to<std::string>(obj.at("table"));
+        // Policy checks
         if (!op_allowed(op))
         {
             return { false, std::string("op not allowed: ") + op, "" };
@@ -69,20 +95,72 @@ auto DbJobExecutor::to_sql(const boost::json::object& obj) -> std::tuple<bool, s
         {
             return { false, std::string("table not allowed: ") + table, "" };
         }
+        if (!is_safe_identifier(table))
+        {
+            return { false, std::string("invalid table name: ") + table, "" };
+        }
 		if (op == "insert")
 		{
 			auto values = obj.if_contains("values") && obj.at("values").is_object() ? obj.at("values").as_object() : boost::json::object{};
+            if (values.empty())
+            {
+                return { false, "insert requires non-empty 'values'", "" };
+            }
+            for (auto& kv : values)
+            {
+                auto key = std::string(kv.key().data(), kv.key().size());
+                if (!is_safe_identifier(key))
+                {
+                    return { false, std::string("invalid column name: ") + key, "" };
+                }
+            }
             return { true, "", build_insert_sql(table, values) };
 		}
 		if (op == "update")
 		{
 			auto values = obj.if_contains("values") && obj.at("values").is_object() ? obj.at("values").as_object() : boost::json::object{};
 			auto where = obj.if_contains("where") && obj.at("where").is_object() ? obj.at("where").as_object() : boost::json::object{};
+            if (values.empty())
+            {
+                return { false, "update requires non-empty 'values'", "" };
+            }
+            if (where.empty())
+            {
+                return { false, "update requires non-empty 'where'", "" };
+            }
+            for (auto& kv : values)
+            {
+                auto key = std::string(kv.key().data(), kv.key().size());
+                if (!is_safe_identifier(key))
+                {
+                    return { false, std::string("invalid column name: ") + key, "" };
+                }
+            }
+            for (auto& kv : where)
+            {
+                auto key = std::string(kv.key().data(), kv.key().size());
+                if (!is_safe_identifier(key))
+                {
+                    return { false, std::string("invalid column name in where: ") + key, "" };
+                }
+            }
             return { true, "", build_update_sql(table, values, where) };
 		}
 		if (op == "delete")
 		{
 			auto where = obj.if_contains("where") && obj.at("where").is_object() ? obj.at("where").as_object() : boost::json::object{};
+            if (where.empty())
+            {
+                return { false, "delete requires non-empty 'where'", "" };
+            }
+            for (auto& kv : where)
+            {
+                auto key = std::string(kv.key().data(), kv.key().size());
+                if (!is_safe_identifier(key))
+                {
+                    return { false, std::string("invalid column name in where: ") + key, "" };
+                }
+            }
             return { true, "", build_delete_sql(table, where) };
 		}
         return { false, std::string("unsupported op: ") + op, "" };
@@ -198,8 +276,15 @@ auto DbJobExecutor::build_where_clause(const boost::json::object& where) const -
 		}
 		first = false;
         clause += quote_identifier(std::string(kv.key().data(), kv.key().size()));
-		clause += " = ";
-		clause += json_value_to_sql_literal(kv.value());
+		if (kv.value().is_null())
+		{
+			clause += " IS NULL";
+		}
+		else
+		{
+			clause += " = ";
+			clause += json_value_to_sql_literal(kv.value());
+		}
 	}
 	return clause;
 }

@@ -6,6 +6,10 @@
 	"rabbit_heartbeat": 60,
 	"rabbit_channel_id": 1,
 	"rabbit_queue": "db.write",
+    "requeue_on_failure": false,
+    "dlx_exchange": "db.write.dlx",
+    "dlx_routing_key": "db.write.dead",
+    "message_ttl_ms": 0,
 
 	"postgres_conn": "host=127.0.0.1 port=5432 dbname=game user=postgres password=postgres",
 	"allowed_ops": ["insert", "update", "delete", "exec"],

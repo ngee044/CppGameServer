@@ -4,7 +4,7 @@
 #include "ArgumentParser.h"
 #include "Configurations.h"
 #include "DbJobExecutor.h"
-#include "MainDbServiceApp.h"
+#include "MainDBService.h"
 #include "PostgresDB.h"
 #include "fmt/format.h"
 
@@ -19,16 +19,17 @@ auto main(int argc, char* argv[]) -> int
 	Configurations cfg(std::move(arguments));
 
 	PostgresDB db(cfg.postgres_conn());
-	auto [db_ok, db_msg] = db.execute_command("SELECT 1;");
-	if (!db_ok)
+	// Health check: perform a simple SELECT and ensure we can fetch tuples
+	auto [db_result, db_msg] = db.execute_query_and_get_result("SELECT 1;");
+	if (!db_result.has_value())
 	{
 		Logger::handle().write(LogTypes::Error, fmt::format("database connection failed: {}", db_msg.value_or("unknown")));
 		return 1;
 	}
 
 	DbJobExecutor executor(db, cfg.allowed_ops(), cfg.allowed_tables());
-	MainDbServiceApp app(cfg, executor);
-	MainDbServiceApp::instance(&app);
+	MainDBService app(cfg, executor);
+	MainDBService::instance(&app);
 
 	auto [ok, err] = app.start();
 	if (!ok)

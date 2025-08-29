@@ -8,13 +8,13 @@ set(SOURCE_FILES
 	main.cpp
 	Configurations.cpp
 	DbJobExecutor.cpp
-	MainDbServiceApp.cpp
+	MainDBService.cpp
 )
 
 set (HEADER_FILES
 	Configurations.h
 	DbJobExecutor.h
-	MainDbServiceApp.h
+	MainDBService.h
 )
 
 project(${PROGRAM_NAME} VERSION 1.0.0.0)

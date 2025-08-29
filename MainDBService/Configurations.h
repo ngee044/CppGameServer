@@ -22,6 +22,10 @@ public:
 	auto rabbit_heartbeat() const -> int;
 	auto rabbit_channel_id() const -> int;
 	auto consume_queue_name() const -> std::string;
+	auto requeue_on_failure() const -> bool;
+	auto dlx_exchange() const -> std::optional<std::string>;
+	auto dlx_routing_key() const -> std::optional<std::string>;
+	auto message_ttl_ms() const -> std::optional<int>;
 
 	auto postgres_conn() const -> std::string;
 	auto allowed_ops() const -> const std::vector<std::string>&;
@@ -42,6 +46,10 @@ private:
 	int rabbit_heartbeat_;
 	int rabbit_channel_id_;
 	std::string consume_queue_name_;
+	bool requeue_on_failure_;
+	std::optional<std::string> dlx_exchange_;
+	std::optional<std::string> dlx_routing_key_;
+	std::optional<int> message_ttl_ms_;
 
 	// DB
 	std::string postgres_conn_;

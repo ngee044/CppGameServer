@@ -34,4 +34,7 @@ private:
 	Database::PostgresDB& db_;
 	std::vector<std::string> allowed_ops_;
 	std::vector<std::string> allowed_tables_;
+
+	// Identifier safety: only allow [A-Za-z_][A-Za-z0-9_]*
+	auto is_safe_identifier(const std::string& ident) const -> bool;
 };
