@@ -1,3 +1,24 @@
 {
-    
+	"service_title": "MainDBService",
+	"root_path": "./",
+	"log_root_path": "./logs/",
+	"write_file": 0,
+	"write_console": 3,
+	"write_interval": 1000,
+
+	"rabbit_host": "127.0.0.1",
+	"rabbit_port": 5672,
+	"rabbit_user": "guest",
+	"rabbit_password": "guest",
+	"rabbit_heartbeat": 60,
+	"rabbit_channel_id": 1,
+	"rabbit_queue": "db.write",
+    "requeue_on_failure": false,
+    "dlx_exchange": "db.write.dlx",
+    "dlx_routing_key": "db.write.dead",
+    "message_ttl_ms": 0,
+
+	"postgres_conn": "host=127.0.0.1 port=5432 dbname=game user=postgres password=postgres",
+	"allowed_ops": ["insert", "update", "delete", "exec"],
+	"allowed_tables": []
 }
