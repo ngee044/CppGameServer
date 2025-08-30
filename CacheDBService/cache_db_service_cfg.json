@@ -1,3 +1,20 @@
 {
-    
+	"redis_host": "127.0.0.1",
+	"redis_port": 6379,
+	"redis_db_index": 0,
+	"redis_stream_key": "cache:changes",
+	"redis_group_name": "cache-writers",
+	"redis_consumer_name": "cache-writer-1",
+	"redis_block_ms": 1000,
+	"redis_count": 50,
+	"redis_auto_create_group": true,
+	"cache_db_service_to_publish_flush_interval_ms": 300,
+
+	"rabbit_mq_host": "127.0.0.1",
+	"rabbit_mq_port": 5672,
+	"rabbit_mq_user_name": "guest",
+	"rabbit_mq_password": "guest",
+	"rabbit_channel_id": 1,
+	"publish_queue_name": "db.write",
+	"content_type": "application/json"
 }
