@@ -1,12 +1,18 @@
 // Main: minimal wiring using split classes
 
 #include "Logger.h"
-#include "ArgumentParser.h"
-#include "Configurations.h"
-#include "DbJobExecutor.h"
-#include "MainDBService.h"
-#include "PostgresDB.h"
-#include "fmt/format.h"
+
+#include <ArgumentParser.h>
+#include <Configurations.h>
+#include <DbJobExecutor.h>
+#include <MainDBService.h>
+#include <PostgresDB.h>
+
+#include <fmt/format.h>
+
+#include <memory>
+#include <string>
+#include <signal.h>
 
 using namespace Utilities;
 using namespace Database;
@@ -34,7 +40,7 @@ auto main(int argc, char* argv[]) -> int
 	if (!db_result.has_value())
 	{
 		Logger::handle().write(LogTypes::Error, fmt::format("database connection failed: {}", db_msg.value_or("unknown")));
-		return 1;
+		return -1;
 	}
 
 	auto executor = std::make_shared<DbJobExecutor>(db, configurations_->allowed_ops(), configurations_->allowed_tables());
@@ -44,7 +50,7 @@ auto main(int argc, char* argv[]) -> int
 	if (!ok)
 	{
 		Logger::handle().write(LogTypes::Error, fmt::format("consumer start failed: {}", err.value_or("unknown")));
-		return 1;
+		return -1;
 	}
 
 	Logger::handle().write(LogTypes::Information, "MainDBService is running");
@@ -55,6 +61,40 @@ auto main(int argc, char* argv[]) -> int
 	configurations_.reset();
 
 	Logger::handle().stop();
-	Utilities::Logger::destroy();
+	Logger::destroy();
+
 	return 0;
+}
+
+void register_signal(void)
+{
+	signal(SIGINT, signal_callback);
+	signal(SIGILL, signal_callback);
+	signal(SIGABRT, signal_callback);
+	signal(SIGFPE, signal_callback);
+	signal(SIGSEGV, signal_callback);
+	signal(SIGTERM, signal_callback);
+}
+
+void deregister_signal(void)
+{
+	signal(SIGINT, nullptr);
+	signal(SIGILL, nullptr);
+	signal(SIGABRT, nullptr);
+	signal(SIGFPE, nullptr);
+	signal(SIGSEGV, nullptr);
+	signal(SIGTERM, nullptr);
+}
+
+void signal_callback(int32_t signum)
+{
+	deregister_signal();
+
+	if (main_db_service_ == nullptr)
+	{
+		return;
+	}
+
+	Logger::handle().write(LogTypes::Information, fmt::format("attempt to stop MainDBService from signal {}", signum));
+	main_db_service_->stop();
 }
