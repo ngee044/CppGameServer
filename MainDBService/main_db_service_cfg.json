@@ -1,4 +1,11 @@
 {
+	"service_title": "MainDBService",
+	"root_path": "./",
+	"log_root_path": "./logs/",
+	"write_file": 0,
+	"write_console": 3,
+	"write_interval": 1000,
+
 	"rabbit_host": "127.0.0.1",
 	"rabbit_port": 5672,
 	"rabbit_user": "guest",

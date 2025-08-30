@@ -3,6 +3,7 @@
 #include "Configurations.h"
 
 #include "File.h"
+#include "LogTypes.h"
 #include "Logger.h"
 #include "Converter.h"
 
@@ -18,6 +19,11 @@ using namespace Utilities;
 
 Configurations::Configurations(ArgumentParser&& arguments)
 	: root_path_("")
+	, service_title_("MainDBService")
+	, log_root_path_("")
+	, write_file_(LogTypes::None)
+	, write_console_(LogTypes::None)
+	, write_interval_(0)
 	, rabbit_mq_host_("127.0.0.1")
 	, rabbit_mq_port_(5672)
 	, rabbit_mq_user_name_("guest")
@@ -38,6 +44,31 @@ Configurations::Configurations(ArgumentParser&& arguments)
 
 Configurations::~Configurations(void)
 {
+}
+
+auto Configurations::service_title() const -> std::string
+{
+	return service_title_;
+}
+
+auto Configurations::log_root_path() const -> std::string
+{
+	return log_root_path_;
+}
+
+auto Configurations::write_file() const -> LogTypes
+{
+	return write_file_;
+}
+
+auto Configurations::write_console() const -> LogTypes
+{
+	return write_console_;
+}
+
+auto Configurations::write_interval() const -> int
+{
+	return write_interval_;
 }
 
 auto Configurations::rabbit_mq_host() const -> std::string
@@ -130,7 +161,31 @@ auto Configurations::load() -> void
 
 	boost::json::object message = boost::json::parse(Converter::to_string(source_data.value())).as_object();
 
-	// Accept both short and long key names for compatibility
+	if (message.contains("service_title"))
+	{
+		service_title_ = message.at("service_title").as_string().data();
+	}
+
+	if (message.contains("log_root_path"))
+	{
+		log_root_path_ = message.at("log_root_path").as_string().data();
+	}
+
+	if (message.contains("write_file"))
+	{
+		write_file_ = static_cast<LogTypes>(message.at("write_file").as_int64());
+	}
+
+	if (message.contains("write_console"))
+	{
+		write_console_ = static_cast<LogTypes>(message.at("write_console").as_int64());
+	}
+
+	if (message.contains("write_interval"))
+	{
+		write_interval_ = static_cast<int>(message.at("write_interval").as_int64());
+	}
+
 	if (message.contains("rabbit_host"))
 	{
 		rabbit_mq_host_ = message.at("rabbit_host").as_string().data();

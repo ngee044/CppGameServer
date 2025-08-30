@@ -4,27 +4,29 @@
 #include "DbJobExecutor.h"
 #include "WorkQueueConsume.h"
 
-#include <atomic>
 #include <optional>
 #include <string>
-#include <tuple>
+#include <memory>
+
+using namespace RabbitMQ;
 
 class MainDBService
 {
 public:
-	MainDBService(const Configurations& cfg, DbJobExecutor& executor);
+	MainDBService(std::shared_ptr<Configurations> configurations, std::shared_ptr<DbJobExecutor> executor);
 
 	auto start() -> std::tuple<bool, std::optional<std::string>>;
-	void run_until_signal();
+	auto wait_stop() -> std::tuple<bool, std::optional<std::string>>;
 	auto stop() -> void;
 
-	static void on_signal(int);
-	static auto instance(MainDBService* inst = nullptr) -> MainDBService*;
+protected:
+	auto consume_queue() -> std::tuple<bool, std::optional<std::string>>;
 
 private:
-	const Configurations& cfg_;
-	DbJobExecutor& executor_;
-	RabbitMQ::WorkQueueConsume consumer_;
-	std::atomic<bool> stop_flag_;
+	std::shared_ptr<Configurations> configurations_;
+	std::shared_ptr<DbJobExecutor> executor_;
+
+
+	std::shared_ptr<WorkQueueConsume> consumer_;
 };
 

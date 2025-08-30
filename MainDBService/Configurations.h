@@ -14,7 +14,13 @@ public:
 	Configurations(ArgumentParser&& arguments);
 	virtual ~Configurations(void);
 
-	// Accessors needed by MainDBService
+	auto service_title() const -> std::string;
+	auto log_root_path() const -> std::string;
+
+	auto write_file() const -> LogTypes;
+	auto write_console() const -> LogTypes;
+	auto write_interval() const -> int;
+
 	auto rabbit_mq_host() const -> std::string;
 	auto rabbit_mq_port() const -> int;
 	auto rabbit_mq_user_name() const -> std::string;
@@ -36,7 +42,13 @@ protected:
 	auto parse(ArgumentParser& arguments) -> void;
 
 private:
+	std::string service_title_;
 	std::string root_path_;
+
+	std::string log_root_path_;
+	LogTypes write_file_;
+	LogTypes write_console_;
+	int write_interval_;
 
 	// MQ
 	std::string rabbit_mq_host_;

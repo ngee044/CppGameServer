@@ -11,15 +11,25 @@
 using namespace Utilities;
 using namespace Database;
 
+void register_signal(void);
+void deregister_signal(void);
+void signal_callback(int32_t signum);
+
+std::shared_ptr<Configurations> configurations_ = nullptr;
+std::shared_ptr<MainDBService> main_db_service_ = nullptr;
+
 auto main(int argc, char* argv[]) -> int
 {
-	Logger::handle().start("MainDBService");
+	configurations_ = std::make_shared<Configurations>(ArgumentParser(argc, argv));
 
-	Utilities::ArgumentParser arguments(argc, argv);
-	Configurations cfg(std::move(arguments));
+	Logger::handle().file_mode(configurations_->write_file());
+	Logger::handle().console_mode(configurations_->write_console());
+	Logger::handle().write_interval(configurations_->write_interval());
+	Logger::handle().log_root(configurations_->log_root_path());
 
-	PostgresDB db(cfg.postgres_conn());
-	// Health check: perform a simple SELECT and ensure we can fetch tuples
+	Logger::handle().start(configurations_->service_title());
+
+	PostgresDB db(configurations_->postgres_conn());
 	auto [db_result, db_msg] = db.execute_query_and_get_result("SELECT 1;");
 	if (!db_result.has_value())
 	{
@@ -27,21 +37,22 @@ auto main(int argc, char* argv[]) -> int
 		return 1;
 	}
 
-	DbJobExecutor executor(db, cfg.allowed_ops(), cfg.allowed_tables());
-	MainDBService app(cfg, executor);
-	MainDBService::instance(&app);
+	auto executor = std::make_shared<DbJobExecutor>(db, configurations_->allowed_ops(), configurations_->allowed_tables());
+	main_db_service_ = std::make_shared<MainDBService>(configurations_, executor);
 
-	auto [ok, err] = app.start();
+	auto [ok, err] = main_db_service_->start();
 	if (!ok)
 	{
 		Logger::handle().write(LogTypes::Error, fmt::format("consumer start failed: {}", err.value_or("unknown")));
 		return 1;
 	}
 
-	Logger::handle().write(LogTypes::Information, "MainDBService is running. Press Ctrl+C to stop.");
-	app.run_until_signal();
-	Logger::handle().write(LogTypes::Information, "MainDBService is stopping...");
-	app.stop();
+	Logger::handle().write(LogTypes::Information, "MainDBService is running");
+
+	main_db_service_->wait_stop();
+	main_db_service_.reset();
+
+	configurations_.reset();
 
 	Logger::handle().stop();
 	Utilities::Logger::destroy();

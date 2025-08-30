@@ -1,106 +1,109 @@
 #include "MainDBService.h"
+#include "Logger.h"
 
-#include <csignal>
-#include <chrono>
-#include <thread>
+#include <fmt/format.h>
+
 
 using namespace RabbitMQ;
 
-MainDBService::MainDBService(const Configurations& cfg, DbJobExecutor& executor)
-	: cfg_(cfg)
+MainDBService::MainDBService(std::shared_ptr<Configurations> configurations, std::shared_ptr<DbJobExecutor> executor)
+	: configurations_(configurations)
 	, executor_(executor)
-	, consumer_(cfg.rabbit_mq_host(), cfg.rabbit_mq_port(), cfg.rabbit_mq_user_name(), cfg.rabbit_mq_password())
-	, stop_flag_(false)
+	, consumer_(std::make_shared<WorkQueueConsume>(configurations_->rabbit_mq_host(), configurations_->rabbit_mq_port(), configurations_->rabbit_mq_user_name(), configurations_->rabbit_mq_password()))
 {
 }
 
 auto MainDBService::start() -> std::tuple<bool, std::optional<std::string>>
 {
-	auto [started, start_err] = consumer_.start();
+	if (consumer_ == nullptr)
+	{
+		return { false, "Consumer is not initialized" };
+	}
+	
+	auto [success, error] = consume_queue();
+	if (!success)
+	{
+		return { false, error };
+	}
+
+	return { true, std::nullopt };
+}
+
+auto MainDBService::wait_stop() -> std::tuple<bool, std::optional<std::string>>
+{
+	if (consumer_ == nullptr)
+	{
+		return { false, "Consumer is not initialized" };
+	}
+
+	consumer_->wait_stop();
+
+	return { true, std::nullopt };
+}
+
+auto MainDBService::stop() -> void
+{
+	if (consumer_ != nullptr)
+	{
+		consumer_->stop();
+		consumer_.reset();
+	}
+}
+
+auto MainDBService::consume_queue() -> std::tuple<bool, std::optional<std::string>>
+{
+	auto [started, start_err] = consumer_->start();
 	if (!started)
 	{
 		return { false, start_err };
 	}
 
-	auto [connected, conn_err] = consumer_.connect(cfg_.rabbit_heartbeat());
+	auto [connected, conn_err] = consumer_->connect(configurations_->rabbit_heartbeat());
 	if (!connected)
 	{
 		return { false, conn_err };
 	}
 
-	// Apply queue policies before channel open/declare
 	{
 		std::optional<uint32_t> ttl_ms = std::nullopt;
-		if (cfg_.message_ttl_ms().has_value() && cfg_.message_ttl_ms().value() > 0)
+		if (configurations_->message_ttl_ms().has_value() && configurations_->message_ttl_ms().value() > 0)
 		{
-			ttl_ms = static_cast<uint32_t>(cfg_.message_ttl_ms().value());
+			ttl_ms = static_cast<uint32_t>(configurations_->message_ttl_ms().value());
 		}
-		consumer_.set_queue_policies(cfg_.dlx_exchange(), cfg_.dlx_routing_key(), ttl_ms);
+		consumer_->set_queue_policies(configurations_->dlx_exchange(), configurations_->dlx_routing_key(), ttl_ms);
 	}
 
-	auto [opened, open_err] = consumer_.channel_open(cfg_.rabbit_channel_id(), cfg_.consume_queue_name());
+	auto [opened, open_err] = consumer_->channel_open(configurations_->rabbit_channel_id(), configurations_->consume_queue_name());
 	if (!opened.has_value())
 	{
 		return { false, open_err };
 	}
 
-	auto [prepared, prep_err] = consumer_.prepare_consume();
+	auto [prepared, prep_err] = consumer_->prepare_consume();
 	if (!prepared)
 	{
 		return { false, prep_err };
 	}
 
-	// Apply failure handling policy (ack/nack requeue behavior)
-	consumer_.set_requeue_on_failure(cfg_.requeue_on_failure());
+	consumer_->set_requeue_on_failure(configurations_->requeue_on_failure());
 
-	auto cb = [this](const std::string&, const std::string& body, const std::string& content_type) -> std::tuple<bool, std::optional<std::string>>
+	auto callback = [this](const std::string&, const std::string& body, const std::string& content_type) -> std::tuple<bool, std::optional<std::string>>
 	{
-		// Enforce JSON payloads for safety (allow parameters like charset)
 		if (content_type.rfind("application/json", 0) != 0)
 		{
 			return { false, std::optional<std::string>("unsupported content-type: " + content_type) };
 		}
-		return executor_.handle_message(body);
+		// TODO
+		// DATA(JSON) Validation
+
+		return executor_->handle_message(body);
 	};
-	auto [registered, reg_err] = consumer_.register_consume(cfg_.rabbit_channel_id(), cfg_.consume_queue_name(), cb);
+
+	auto [registered, registered_error] = consumer_->register_consume(configurations_->rabbit_channel_id(), configurations_->consume_queue_name(), callback);
 	if (!registered)
 	{
-		return { false, reg_err };
+		return { false, registered_error };
 	}
 
-	return consumer_.start_consume();
+	return consumer_->start_consume();
 }
-
-void MainDBService::run_until_signal()
-{
-	std::signal(SIGINT, &MainDBService::on_signal);
-	std::signal(SIGTERM, &MainDBService::on_signal);
-
-	while (!stop_flag_.load())
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(200));
-	}
-}
-
-auto MainDBService::stop() -> void
-{
-	consumer_.stop_consume();
-	consumer_.channel_close();
-	consumer_.disconnect();
-}
-
-void MainDBService::on_signal(int)
-{
-	instance()->stop_flag_.store(true);
-}
-
-auto MainDBService::instance(MainDBService* inst) -> MainDBService*
-{
-	static MainDBService* self = nullptr;
-	if (inst != nullptr)
-	{
-		self = inst;
-	}
-	return self;
-}
-
