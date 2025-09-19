@@ -18,6 +18,14 @@ using namespace Utilities;
 
 Configurations::Configurations(ArgumentParser&& arguments)
 	: root_path_("")
+	, service_title_("CacheDBService")
+	, log_root_path_("")
+	, write_file_(LogTypes::None)
+	, write_console_(LogTypes::None)
+	, write_interval_(0)
+	, high_priority_worker_count_(1)
+	, normal_priority_worker_count_(1)
+	, low_priority_worker_count_(1)
 	, redis_host_("127.0.0.1")
 	, redis_port_(6379)
 	, redis_db_index_(0)
@@ -27,7 +35,6 @@ Configurations::Configurations(ArgumentParser&& arguments)
 	, redis_block_ms_(1000)
 	, redis_count_(50)
 	, redis_auto_create_group_(true)
-	, cache_db_service_to_publish_flush_interval_ms_(300)
 	, rabbit_mq_host_("127.0.0.1")
 	, rabbit_mq_port_(5672)
 	, rabbit_mq_user_name_("guest")
@@ -35,6 +42,7 @@ Configurations::Configurations(ArgumentParser&& arguments)
 	, rabbit_channel_id_(1)
 	, publish_queue_name_("db.write")
 	, content_type_("application/json")
+	, publish_to_main_db_service_interval_ms_(1000)
 {
 	root_path_ = arguments.program_folder();
 	load();
@@ -44,6 +52,20 @@ Configurations::Configurations(ArgumentParser&& arguments)
 Configurations::~Configurations(void)
 {
 }
+
+// Logger getters
+auto Configurations::service_title() const -> std::string { return service_title_; }
+auto Configurations::log_root_path() const -> std::string { return log_root_path_; }
+auto Configurations::write_file() const -> LogTypes { return write_file_; }
+auto Configurations::write_console() const -> LogTypes { return write_console_; }
+auto Configurations::write_interval() const -> int { return write_interval_; }
+
+// Logger setters
+auto Configurations::set_service_title(const std::string& value) -> void { service_title_ = value; }
+auto Configurations::set_log_root_path(const std::string& value) -> void { log_root_path_ = value; }
+auto Configurations::set_write_file(const LogTypes& value) -> void { write_file_ = value; }
+auto Configurations::set_write_console(const LogTypes& value) -> void { write_console_ = value; }
+auto Configurations::set_write_interval(const int& value) -> void { write_interval_ = value; }
 
 auto Configurations::redis_host() const -> std::string
 {
@@ -90,9 +112,9 @@ auto Configurations::redis_auto_create_group() const -> bool
 	return redis_auto_create_group_;
 }
 
-auto Configurations::cache_db_service_to_publish_flush_interval_ms() const -> int
+auto Configurations::publish_to_main_db_service_interval_ms() const -> int
 {
-	return cache_db_service_to_publish_flush_interval_ms_;
+	return publish_to_main_db_service_interval_ms_;
 }
 
 auto Configurations::rabbit_mq_host() const -> std::string
@@ -150,6 +172,42 @@ auto Configurations::load() -> void
 
 	boost::json::object obj = boost::json::parse(Converter::to_string(source_data.value())).as_object();
 
+	// Logger
+	if (obj.contains("service_title"))
+	{
+		service_title_ = obj.at("service_title").as_string().data();
+	}
+	if (obj.contains("log_root_path"))
+	{
+		log_root_path_ = obj.at("log_root_path").as_string().data();
+	}
+	if (obj.contains("write_file"))
+	{
+		write_file_ = static_cast<LogTypes>(obj.at("write_file").as_int64());
+	}
+	if (obj.contains("write_console"))
+	{
+		write_console_ = static_cast<LogTypes>(obj.at("write_console").as_int64());
+	}
+	if (obj.contains("write_interval"))
+	{
+		write_interval_ = static_cast<int>(obj.at("write_interval").as_int64());
+	}
+
+	// Thread pool
+	if (obj.contains("high_priority_count"))
+	{
+		high_priority_worker_count_ = static_cast<int>(obj.at("high_priority_count").as_int64());
+	}
+	if (obj.contains("normal_priority_count"))
+	{
+		normal_priority_worker_count_ = static_cast<int>(obj.at("normal_priority_count").as_int64());
+	}
+	if (obj.contains("low_priority_count"))
+	{
+		low_priority_worker_count_ = static_cast<int>(obj.at("low_priority_count").as_int64());
+	}
+
 	// Redis
 	if (obj.contains("redis_host"))
 	{
@@ -187,9 +245,9 @@ auto Configurations::load() -> void
 	{
 		redis_auto_create_group_ = obj.at("redis_auto_create_group").as_bool();
 	}
-	if (obj.contains("cache_db_service_to_publish_flush_interval_ms"))
+	if (obj.contains("publish_to_main_db_service_interval_ms"))
 	{
-		cache_db_service_to_publish_flush_interval_ms_ = static_cast<int>(obj.at("cache_db_service_to_publish_flush_interval_ms").as_int64());
+		publish_to_main_db_service_interval_ms_ = static_cast<int>(obj.at("publish_to_main_db_service_interval_ms").as_int64());
 	}
 
 	// MQ
@@ -225,6 +283,42 @@ auto Configurations::load() -> void
 
 auto Configurations::parse(ArgumentParser& arguments) -> void
 {
+	// Logger
+	if (auto v = arguments.to_string("--service_title"); v != std::nullopt)
+	{
+		service_title_ = v.value();
+	}
+	if (auto v = arguments.to_string("--log_root_path"); v != std::nullopt)
+	{
+		log_root_path_ = v.value();
+	}
+	if (auto v = arguments.to_int("--write_file"); v != std::nullopt)
+	{
+		write_file_ = static_cast<LogTypes>(v.value());
+	}
+	if (auto v = arguments.to_int("--write_console"); v != std::nullopt)
+	{
+		write_console_ = static_cast<LogTypes>(v.value());
+	}
+	if (auto v = arguments.to_int("--write_interval"); v != std::nullopt)
+	{
+		write_interval_ = v.value();
+	}
+
+	// Thread pool
+	if (auto v = arguments.to_int("--high_priority_count"); v != std::nullopt)
+	{
+		high_priority_worker_count_ = v.value();
+	}
+	if (auto v = arguments.to_int("--normal_priority_count"); v != std::nullopt)
+	{
+		normal_priority_worker_count_ = v.value();
+	}
+	if (auto v = arguments.to_int("--low_priority_count"); v != std::nullopt)
+	{
+		low_priority_worker_count_ = v.value();
+	}
+
 	// Redis
 	if (auto v = arguments.to_string("--redis_host"); v != std::nullopt)
 	{
@@ -262,9 +356,9 @@ auto Configurations::parse(ArgumentParser& arguments) -> void
 	{
 		redis_auto_create_group_ = v.value();
 	}
-	if (auto v = arguments.to_int("--cache_db_service_to_publish_flush_interval_ms"); v != std::nullopt)
+	if (auto v = arguments.to_int("--publish_to_main_db_service_interval_ms"); v != std::nullopt)
 	{
-		cache_db_service_to_publish_flush_interval_ms_ = v.value();
+		publish_to_main_db_service_interval_ms_ = v.value();
 	}
 
 	// MQ
@@ -297,3 +391,7 @@ auto Configurations::parse(ArgumentParser& arguments) -> void
 		content_type_ = v.value();
 	}
 }
+// Thread pool getters
+auto Configurations::high_priority_worker_count() const -> int { return high_priority_worker_count_; }
+auto Configurations::normal_priority_worker_count() const -> int { return normal_priority_worker_count_; }
+auto Configurations::low_priority_worker_count() const -> int { return low_priority_worker_count_; }

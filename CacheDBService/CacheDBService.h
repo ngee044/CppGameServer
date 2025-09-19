@@ -3,51 +3,60 @@
 #include "Configurations.h"
 #include "RedisClient.h"
 #include "WorkQueueEmitter.h"
-
-#include <atomic>
-#include <optional>
-#include <string>
-#include <tuple>
-#include <vector>
-#include <mutex>
-
 #include "ThreadPool.h"
 #include "ThreadWorker.h"
 #include "Job.h"
 #include "JobPriorities.h"
 
+#include <future>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <vector>
+
+using namespace Thread;
+
 class CacheDBService
 {
 public:
-	CacheDBService(const Configurations& cfg);
+	CacheDBService(std::shared_ptr<Configurations> configurations);
 	virtual ~CacheDBService();
 
 	auto start() -> std::tuple<bool, std::optional<std::string>>;
 	auto wait_stop() -> std::tuple<bool, std::optional<std::string>>;
 	auto stop() -> std::tuple<bool, std::optional<std::string>>;
 
-private:
-	void consume_loop();
+	// Direct cache access API
+	auto set_key_value(const std::string& key, const std::string& value, long ttl_seconds = 0) -> std::tuple<bool, std::optional<std::string>>;
+	auto get_key_value(const std::string& key) -> std::tuple<std::optional<std::string>, std::optional<std::string>>;
+	auto enqueue_database_operation(const std::string& json_body) -> std::tuple<bool, std::optional<std::string>>;
+
+protected:
+	auto create_thread_pool() -> std::tuple<bool, std::optional<std::string>>;
+	auto destroy_thread_pool() -> void;
 	auto ensure_stream_group() -> std::tuple<bool, std::optional<std::string>>;
-	auto publish_json(const std::string& body) -> std::tuple<bool, std::optional<std::string>>;
+	auto publish_message(const std::string& message_body) -> std::tuple<bool, std::optional<std::string>>;
 
 private:
-	const Configurations& cfg_;
-	Redis::RedisClient redis_;
-	RabbitMQ::WorkQueueEmitter emitter_;
-	std::atomic<bool> stop_flag_;
-	std::shared_ptr<Thread::ThreadPool> thread_pool_;
+	std::shared_ptr<Configurations> configurations_;
+    std::unique_ptr<Redis::RedisClient> redis_client_;
+    std::unique_ptr<RabbitMQ::WorkQueueEmitter> work_queue_emitter_;
+    std::shared_ptr<ThreadPool> thread_pool_;
 
-	struct Pending
+    std::promise<void> stop_promise_;
+    std::shared_future<void> stop_future_;
+
+	struct PendingMessage
 	{
-		std::string key;
-		std::string id;
-		std::string body;
+		std::string message_body;
 	};
-	std::mutex pending_mutex_;
-	std::vector<Pending> pending_;
 
-	// scheduling helpers
-	void schedule_flush_job();
-	auto flush_cycle() -> std::tuple<bool, std::optional<std::string>>;
+	std::mutex pending_mutex_;
+	std::vector<PendingMessage> pending_messages_;
+
+	void schedule_publish_job();
+	auto publish_to_main_db_service() -> std::tuple<bool, std::optional<std::string>>;
+	auto is_stop_requested() const -> bool;
 };

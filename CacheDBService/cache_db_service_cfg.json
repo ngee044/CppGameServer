@@ -1,4 +1,11 @@
 {
+	"service_title": "CacheDBService",
+	"root_path": "./",
+	"log_root_path": "./logs/",
+	"write_file": 0,
+	"write_console": 3,
+	"write_interval": 1000,
+
 	"redis_host": "127.0.0.1",
 	"redis_port": 6379,
 	"redis_db_index": 0,
@@ -8,7 +15,10 @@
 	"redis_block_ms": 1000,
 	"redis_count": 50,
 	"redis_auto_create_group": true,
-	"cache_db_service_to_publish_flush_interval_ms": 300,
+	"publish_to_main_db_service_interval_ms": 1000,
+	"high_priority_count": 3,
+	"normal_priority_count": 3,
+	"low_priority_count": 5,
 
 	"rabbit_mq_host": "127.0.0.1",
 	"rabbit_mq_port": 5672,

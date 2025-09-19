@@ -1,195 +1,359 @@
 #include "CacheDBService.h"
 
 #include "Logger.h"
+#include "JobPool.h"
 
 #include "fmt/format.h"
+#include <algorithm>
 #include <chrono>
 #include <thread>
+#include <utility>
+#include <future>
 
 #include "boost/json.hpp"
 #include "boost/json/parse.hpp"
 
 using namespace Utilities;
 
-CacheDBService::CacheDBService(const Configurations& cfg)
-	: cfg_(cfg)
-	, redis_(cfg.redis_host(), cfg.redis_port(), Redis::TLSOptions(), cfg.redis_db_index())
-	, emitter_(cfg.rabbit_mq_host(), cfg.rabbit_mq_port(), cfg.rabbit_mq_user_name(), cfg.rabbit_mq_password())
-	, stop_flag_(false)
+CacheDBService::CacheDBService(std::shared_ptr<Configurations> configurations)
+    : configurations_(std::move(configurations))
+    , redis_client_(nullptr)
+    , work_queue_emitter_(nullptr)
+    , thread_pool_(nullptr)
 {
 }
 
-CacheDBService::~CacheDBService() { stop(); }
+CacheDBService::~CacheDBService()
+{
+	stop();
+}
 
 auto CacheDBService::start() -> std::tuple<bool, std::optional<std::string>>
 {
-	stop_flag_.store(false);
+    stop_promise_ = std::promise<void>();
+    stop_future_ = stop_promise_.get_future().share();
 
-	// Ensure stream group exists (best-effort)
-	ensure_stream_group();
-
-	// Create thread pool and worker
-	thread_pool_ = std::make_shared<Thread::ThreadPool>("CacheDBServiceThreadPool");
 	{
-		auto [started, err] = thread_pool_->start();
-		if (!started)
+		std::lock_guard<std::mutex> lock(pending_mutex_);
+		pending_messages_.clear();
+	}
+
+	if (redis_client_ == nullptr)
+	{
+		redis_client_ = std::make_unique<Redis::RedisClient>(
+			configurations_->redis_host(),
+			configurations_->redis_port(),
+			Redis::TLSOptions(),
+			configurations_->redis_db_index());
+	}
+
+	if (!redis_client_->is_connected())
+	{
+		auto [connected, connect_error] = redis_client_->connect();
+		if (!connected)
 		{
-			return { false, err };
+			auto message = connect_error.has_value() ? connect_error : std::optional<std::string>("failed to connect redis");
+			return { false, message };
 		}
 	}
-	thread_pool_->push(std::make_shared<Thread::ThreadWorker>(
-		std::vector<Thread::JobPriorities>{ Thread::JobPriorities::LongTerm },
-		"CacheDBServiceWorker"));
 
-	// Kick first cycle; subsequent cycles re-enqueue themselves via std::bind
-	schedule_flush_job();
+	if (work_queue_emitter_ == nullptr)
+	{
+		work_queue_emitter_ = std::make_unique<RabbitMQ::WorkQueueEmitter>(
+			configurations_->rabbit_mq_host(),
+			configurations_->rabbit_mq_port(),
+			configurations_->rabbit_mq_user_name(),
+			configurations_->rabbit_mq_password());
+	}
+
+	auto [pool_created, pool_error] = create_thread_pool();
+	if (!pool_created)
+	{
+		return { false, pool_error };
+	}
+
+	// Kick first cycle; subsequent cycles re-enqueue themselves via job pool
+	schedule_publish_job();
 
 	return { true, std::nullopt };
 }
 
 auto CacheDBService::wait_stop() -> std::tuple<bool, std::optional<std::string>>
 {
-	// Simple wait loop; external stop() should be called by operator
-	while (!stop_flag_.load())
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(200));
-	}
-	return { true, std::nullopt };
+    if (!stop_future_.valid())
+    {
+        return { false, std::optional<std::string>("service is not running") };
+    }
+    stop_future_.wait();
+    stop_future_ = std::shared_future<void>();
+    return { true, std::nullopt };
 }
 
 auto CacheDBService::stop() -> std::tuple<bool, std::optional<std::string>>
 {
-	stop_flag_.store(true);
-	if (thread_pool_ != nullptr)
-	{
-		thread_pool_->remove_workers(Thread::JobPriorities::LongTerm);
-		thread_pool_->stop(true);
-		thread_pool_.reset();
-	}
-	return { true, std::nullopt };
+    destroy_thread_pool();
+    if (stop_future_.valid())
+    {
+        try
+        {
+            stop_promise_.set_value();
+        }
+        catch (const std::future_error&)
+        {
+            // already satisfied
+        }
+    }
+    stop_future_ = std::shared_future<void>();
+    return { true, std::nullopt };
 }
 
-auto CacheDBService::ensure_stream_group() -> std::tuple<bool, std::optional<std::string>>
+auto CacheDBService::create_thread_pool() -> std::tuple<bool, std::optional<std::string>>
 {
-	if (!cfg_.redis_auto_create_group())
+	destroy_thread_pool();
+
+	try
 	{
+		thread_pool_ = std::make_shared<ThreadPool>();
+	}
+	catch (const std::bad_alloc& e)
+	{
+		return { false, fmt::format("Memory allocation failed to ThreadPool: {}", e.what()) };
+	}
+
+	auto allocate_workers = [&](int count, const std::vector<JobPriorities>& priorities) -> std::tuple<bool, std::optional<std::string>>
+	{
+		int effective_count = std::max(0, count);
+		for (int idx = 0; idx < effective_count; ++idx)
+		{
+			try
+			{
+				auto worker = std::make_shared<ThreadWorker>(priorities);
+				thread_pool_->push(worker);
+			}
+			catch (const std::bad_alloc& e)
+			{
+				return { false, fmt::format("Memory allocation failed to ThreadWorker: {}", e.what()) };
+			}
+		}
 		return { true, std::nullopt };
+	};
+
+	auto [high_ok, high_err] = allocate_workers(configurations_->high_priority_worker_count(), std::vector<JobPriorities>{ JobPriorities::High });
+	if (!high_ok)
+	{
+		return { false, high_err };
 	}
 
-	auto [ok, err] = redis_.xgroup_create(cfg_.redis_stream_key(), cfg_.redis_group_name(), "$", true);
-	if (!ok && err.has_value())
+	auto [normal_ok, normal_err] = allocate_workers(configurations_->normal_priority_worker_count(), std::vector<JobPriorities>{ JobPriorities::Normal, JobPriorities::High });
+	if (!normal_ok)
 	{
-		// 그룹이 이미 있으면 에러가 날 수 있으므로, 존재 에러는 무시
-		Logger::handle().write(LogTypes::Debug, fmt::format("xgroup_create: {}", err.value()));
+		return { false, normal_err };
 	}
+
+	auto [low_ok, low_err] = allocate_workers(configurations_->low_priority_worker_count(), std::vector<JobPriorities>{ JobPriorities::Low });
+	if (!low_ok)
+	{
+		return { false, low_err };
+	}
+
+	// Ensure at least one long-term worker for scheduled jobs
+	auto [long_ok, long_err] = allocate_workers(1, std::vector<JobPriorities>{ JobPriorities::LongTerm });
+	if (!long_ok)
+	{
+		return { false, long_err };
+	}
+
+	auto [result, message] = thread_pool_->start();
+	if (!result)
+	{
+		return { false, message };
+	}
+
 	return { true, std::nullopt };
 }
 
-auto CacheDBService::publish_json(const std::string& body) -> std::tuple<bool, std::optional<std::string>>
-{
-	return emitter_.publish(cfg_.rabbit_channel_id(), cfg_.publish_queue_name(), body, cfg_.content_type());
-}
-
-void CacheDBService::consume_loop() {}
-
-void CacheDBService::schedule_flush_job()
+auto CacheDBService::destroy_thread_pool() -> void
 {
 	if (thread_pool_ == nullptr)
 	{
 		return;
 	}
-	thread_pool_->push(std::make_shared<Thread::Job>(
-		Thread::JobPriorities::LongTerm,
-		std::bind(&CacheDBService::flush_cycle, this),
-		"CacheDBService::flush_cycle",
-		false));
+	thread_pool_->stop();
+	thread_pool_.reset();
 }
 
-auto CacheDBService::flush_cycle() -> std::tuple<bool, std::optional<std::string>>
+auto CacheDBService::ensure_stream_group() -> std::tuple<bool, std::optional<std::string>>
 {
-	using clock = std::chrono::steady_clock;
-	auto interval = std::chrono::milliseconds(cfg_.cache_db_service_to_publish_flush_interval_ms());
-	auto end_time = clock::now() + interval;
+	// No consumption required currently; return success
+	return { true, std::nullopt };
+}
 
-	while (!stop_flag_.load())
+auto CacheDBService::publish_message(const std::string& message_body) -> std::tuple<bool, std::optional<std::string>>
+{
+	if (work_queue_emitter_ == nullptr)
 	{
-		long remain_ms = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(end_time - clock::now()).count());
-		if (remain_ms <= 0)
+		return { false, std::optional<std::string>("WorkQueueEmitter is null") };
+	}
+	return work_queue_emitter_->publish(
+		configurations_->rabbit_channel_id(),
+		configurations_->publish_queue_name(),
+		message_body,
+		configurations_->content_type(),
+		std::nullopt);
+}
+
+auto CacheDBService::set_key_value(const std::string& key, const std::string& value, long ttl_seconds) -> std::tuple<bool, std::optional<std::string>>
+{
+	if (redis_client_ == nullptr)
+	{
+		return { false, std::optional<std::string>("Redis client is null") };
+	}
+	if (!redis_client_->is_connected())
+	{
+		auto [connected, connect_error] = redis_client_->connect();
+		if (!connected)
 		{
-			break;
+			auto message = connect_error.has_value() ? connect_error : std::optional<std::string>("failed to connect redis");
+			return { false, message };
 		}
-		long block_ms = std::max(0L, std::min(static_cast<long>(cfg_.redis_block_ms()), remain_ms));
-		auto [streams, err] = redis_.xreadgroup(
-			cfg_.redis_group_name(),
-			cfg_.redis_consumer_name(),
-			std::vector<std::string>{ cfg_.redis_stream_key() },
-			std::vector<std::string>{ ">" },
-			cfg_.redis_count(),
-			block_ms);
+	}
+	auto [success, error_message] = redis_client_->set(key, value, ttl_seconds);
+	return { success, error_message };
+}
 
-		if (err.has_value())
+auto CacheDBService::get_key_value(const std::string& key) -> std::tuple<std::optional<std::string>, std::optional<std::string>>
+{
+	if (redis_client_ == nullptr)
+	{
+		return { std::nullopt, std::optional<std::string>("Redis client is null") };
+	}
+	if (!redis_client_->is_connected())
+	{
+		auto [connected, connect_error] = redis_client_->connect();
+		if (!connected)
 		{
-			Logger::handle().write(LogTypes::Error, fmt::format("xreadgroup error: {}", err.value()));
-			continue;
+			auto message = connect_error.has_value() ? connect_error : std::optional<std::string>("failed to connect redis");
+			return { std::nullopt, message };
 		}
+	}
+	return redis_client_->get(key);
+}
 
-		for (auto& stream : streams)
+auto CacheDBService::enqueue_database_operation(const std::string& json_body) -> std::tuple<bool, std::optional<std::string>>
+{
+	// Basic JSON validation
+	try
+	{
+			auto json_value = boost::json::parse(json_body);
+			if (!json_value.is_object())
 		{
-			const auto& key = stream.first;
-			for (auto& entry : stream.second)
-			{
-				const auto& id = entry.first;
-				const auto& fields = entry.second;
-				std::string body;
-				auto it = fields.find("message");
-				if (it != fields.end())
-				{
-					body = it->second;
-				}
-				else
-				{
-					boost::json::object o;
-					for (const auto& kv : fields)
-					{
-						o[kv.first] = kv.second;
-					}
-					body = boost::json::serialize(o);
-				}
+			return { false, std::optional<std::string>("message is not a JSON object") };
+		}
+	}
+	catch (const std::exception& e)
+	{
+		return { false, std::optional<std::string>(std::string("invalid JSON: ") + e.what()) };
+	}
 
-				{
-					std::lock_guard<std::mutex> lk(pending_mutex_);
-					pending_.push_back(Pending{ key, id, body });
-				}
-			}
+	{
+		std::lock_guard<std::mutex> lock(pending_mutex_);
+		pending_messages_.push_back(PendingMessage{ json_body });
+	}
+	return { true, std::nullopt };
+}
+
+void CacheDBService::schedule_publish_job()
+{
+	if (thread_pool_ == nullptr || is_stop_requested())
+	{
+		return;
+	}
+	auto [queued, queue_error] = thread_pool_->push(std::make_shared<Job>(
+		JobPriorities::LongTerm,
+		std::bind(&CacheDBService::publish_to_main_db_service, this),
+		"publish_to_main_db_service"));
+	if (!queued)
+	{
+		Logger::handle().write(LogTypes::Error, queue_error.value_or("failed to schedule publish job"));
+	}
+}
+
+auto CacheDBService::publish_to_main_db_service() -> std::tuple<bool, std::optional<std::string>>
+{
+	if (thread_pool_ == nullptr)
+	{
+		return { false, std::optional<std::string>("thread_pool is null") };
+	}
+
+	if (is_stop_requested())
+	{
+		return { true, std::nullopt };
+	}
+
+	const auto wait_interval = std::chrono::milliseconds(configurations_->publish_to_main_db_service_interval_ms());
+	const auto wake_slice = std::chrono::milliseconds(100);
+	auto deadline = std::chrono::steady_clock::now() + wait_interval;
+	while (!is_stop_requested() && std::chrono::steady_clock::now() < deadline)
+	{
+		auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+		auto sleep_span = remaining > wake_slice ? wake_slice : remaining;
+		if (sleep_span.count() > 0)
+		{
+			std::this_thread::sleep_for(sleep_span);
 		}
 	}
 
-	// Flush
-	std::vector<Pending> to_flush;
+	if (is_stop_requested())
 	{
-		std::lock_guard<std::mutex> lk(pending_mutex_);
-		to_flush.swap(pending_);
+		return { true, std::nullopt };
 	}
-	for (const auto& p : to_flush)
+
+	std::vector<PendingMessage> messages_to_flush;
 	{
-		auto [pub_ok, pub_err] = publish_json(p.body);
-		if (!pub_ok)
+		std::lock_guard<std::mutex> lock(pending_mutex_);
+		messages_to_flush.swap(pending_messages_);
+	}
+
+	for (const auto& pending_message : messages_to_flush)
+	{
+		if (is_stop_requested())
 		{
-			Logger::handle().write(LogTypes::Error, fmt::format("publish failed: {}", pub_err.value_or("unknown")));
-			continue; // leave unacked
+			return { true, std::nullopt };
 		}
-		auto [acked, ack_err] = redis_.xack(p.key, cfg_.redis_group_name(), std::vector<std::string>{ p.id });
-		if (ack_err.has_value())
+
+		auto [publish_success, publish_error] = publish_message(pending_message.message_body);
+		if (!publish_success)
 		{
-			Logger::handle().write(LogTypes::Error, fmt::format("xack failed: {}", ack_err.value()));
+			Logger::handle().write(LogTypes::Error, fmt::format("Failed to publish message: {}", publish_error.value_or("unknown error")));
+			std::lock_guard<std::mutex> lock(pending_mutex_);
+			pending_messages_.push_back(pending_message);
 		}
 	}
 
-	// Re-enqueue next cycle if not stopping
-	if (!stop_flag_.load() && thread_pool_ != nullptr)
+	auto job_pool = thread_pool_->job_pool();
+	if (job_pool == nullptr || job_pool->lock())
 	{
-		schedule_flush_job();
+		return { false, std::optional<std::string>("job_pool is null or locked") };
+	}
+
+	if (!is_stop_requested())
+	{
+		auto [queued, queue_error] = job_pool->push(
+			std::make_shared<Job>(JobPriorities::LongTerm, std::bind(&CacheDBService::publish_to_main_db_service, this), "publish_to_main_db_service"));
+		if (!queued)
+		{
+			return { false, queue_error };
+		}
 	}
 
 	return { true, std::nullopt };
+}
+
+auto CacheDBService::is_stop_requested() const -> bool
+{
+    if (!stop_future_.valid())
+    {
+        return false;
+    }
+    return stop_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
 }
