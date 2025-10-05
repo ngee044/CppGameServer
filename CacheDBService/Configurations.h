@@ -47,6 +47,8 @@ public:
 	auto redis_count() const -> int;
 	auto redis_auto_create_group() const -> bool;
 	auto publish_to_main_db_service_interval_ms() const -> int;
+	auto redis_reconnect_max_retries() const -> int;
+	auto redis_reconnect_interval_ms() const -> int;
 
 	// MQ publisher
 	auto rabbit_mq_host() const -> std::string;
@@ -56,6 +58,8 @@ public:
 	auto rabbit_channel_id() const -> int;
 	auto publish_queue_name() const -> std::string;
 	auto content_type() const -> std::string;
+	auto rabbit_mq_reconnect_max_retries() const -> int;
+	auto rabbit_mq_reconnect_interval_ms() const -> int;
 
 protected:
 	auto load() -> void;
@@ -86,6 +90,8 @@ private:
 	int redis_count_;
 	bool redis_auto_create_group_;
 	int publish_to_main_db_service_interval_ms_;
+	int redis_reconnect_max_retries_;
+	int redis_reconnect_interval_ms_;
 
 	// MQ
 	std::string rabbit_mq_host_;
@@ -95,4 +101,6 @@ private:
 	int rabbit_channel_id_;
 	std::string publish_queue_name_;
 	std::string content_type_;
+	int rabbit_mq_reconnect_max_retries_;
+	int rabbit_mq_reconnect_interval_ms_;
 };

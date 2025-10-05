@@ -47,14 +47,10 @@ auto CacheDBService::start() -> std::tuple<bool, std::optional<std::string>>
 			configurations_->redis_db_index());
 	}
 
-	if (!redis_client_->is_connected())
+	auto [connected, connect_error] = ensure_redis_connection();
+	if (!connected)
 	{
-		auto [connected, connect_error] = redis_client_->connect();
-		if (!connected)
-		{
-			auto message = connect_error.has_value() ? connect_error : std::optional<std::string>("failed to connect redis");
-			return { false, message };
-		}
+		return { false, connect_error };
 	}
 
 	if (work_queue_emitter_ == nullptr)
@@ -64,6 +60,12 @@ auto CacheDBService::start() -> std::tuple<bool, std::optional<std::string>>
 			configurations_->rabbit_mq_port(),
 			configurations_->rabbit_mq_user_name(),
 			configurations_->rabbit_mq_password());
+	}
+
+	auto [mq_connected, mq_connect_error] = ensure_rabbitmq_connection();
+	if (!mq_connected)
+	{
+		return { false, mq_connect_error };
 	}
 
 	auto [pool_created, pool_error] = create_thread_pool();
@@ -188,55 +190,177 @@ auto CacheDBService::ensure_stream_group() -> std::tuple<bool, std::optional<std
 	return { true, std::nullopt };
 }
 
+auto CacheDBService::ensure_redis_connection() -> std::tuple<bool, std::optional<std::string>>
+{
+	if (redis_client_ == nullptr)
+	{
+		return { false, std::optional<std::string>("Redis client is null") };
+	}
+
+	if (redis_client_->is_connected())
+	{
+		return { true, std::nullopt };
+	}
+
+	int max_retries = configurations_->redis_reconnect_max_retries();
+	int interval_ms = configurations_->redis_reconnect_interval_ms();
+
+	for (int retry = 0; retry < max_retries; ++retry)
+	{
+		auto [connected, connect_error] = redis_client_->connect();
+		if (connected)
+		{
+			Logger::handle().write(LogTypes::Information,
+				fmt::format("Redis reconnected successfully after {} retries", retry));
+			return { true, std::nullopt };
+		}
+
+		Logger::handle().write(LogTypes::Warning,
+			fmt::format("Redis connection failed (retry {}/{}): {}",
+				retry + 1, max_retries, connect_error.value_or("unknown error")));
+
+		if (retry < max_retries - 1)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+		}
+	}
+
+	return { false, std::optional<std::string>(
+		fmt::format("Failed to reconnect to Redis after {} retries", max_retries)) };
+}
+
+auto CacheDBService::ensure_rabbitmq_connection() -> std::tuple<bool, std::optional<std::string>>
+{
+	if (work_queue_emitter_ == nullptr)
+	{
+		return { false, std::optional<std::string>("WorkQueueEmitter is null") };
+	}
+
+	int max_retries = configurations_->rabbit_mq_reconnect_max_retries();
+	int interval_ms = configurations_->rabbit_mq_reconnect_interval_ms();
+
+	for (int retry = 0; retry < max_retries; ++retry)
+	{
+		auto [started, start_error] = work_queue_emitter_->start();
+		if (started)
+		{
+			if (retry > 0)
+			{
+				Logger::handle().write(LogTypes::Information,
+					fmt::format("RabbitMQ reconnected successfully after {} retries", retry));
+			}
+			return { true, std::nullopt };
+		}
+
+		Logger::handle().write(LogTypes::Warning,
+			fmt::format("RabbitMQ connection failed (retry {}/{}): {}",
+				retry + 1, max_retries, start_error.value_or("unknown error")));
+
+		if (retry < max_retries - 1)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+		}
+	}
+
+	return { false, std::optional<std::string>(
+		fmt::format("Failed to connect to RabbitMQ after {} retries", max_retries)) };
+}
+
 auto CacheDBService::publish_message(const std::string& message_body) -> std::tuple<bool, std::optional<std::string>>
 {
 	if (work_queue_emitter_ == nullptr)
 	{
 		return { false, std::optional<std::string>("WorkQueueEmitter is null") };
 	}
-	return work_queue_emitter_->publish(
+
+	auto [success, error_message] = work_queue_emitter_->publish(
 		configurations_->rabbit_channel_id(),
 		configurations_->publish_queue_name(),
 		message_body,
 		configurations_->content_type(),
 		std::nullopt);
+
+	// If operation failed due to connection issue, try to reconnect and retry
+	if (!success && error_message.has_value() &&
+		(error_message.value().find("connection") != std::string::npos ||
+		 error_message.value().find("socket") != std::string::npos ||
+		 error_message.value().find("channel") != std::string::npos))
+	{
+		Logger::handle().write(LogTypes::Warning,
+			fmt::format("RabbitMQ publish failed, attempting reconnection: {}", error_message.value()));
+
+		auto [reconnected, reconnect_error] = ensure_rabbitmq_connection();
+		if (reconnected)
+		{
+			return work_queue_emitter_->publish(
+				configurations_->rabbit_channel_id(),
+				configurations_->publish_queue_name(),
+				message_body,
+				configurations_->content_type(),
+				std::nullopt);
+		}
+		return { false, reconnect_error };
+	}
+
+	return { success, error_message };
 }
 
 auto CacheDBService::set_key_value(const std::string& key, const std::string& value, long ttl_seconds) -> std::tuple<bool, std::optional<std::string>>
 {
-	if (redis_client_ == nullptr)
+	auto [connected, connect_error] = ensure_redis_connection();
+	if (!connected)
 	{
-		return { false, std::optional<std::string>("Redis client is null") };
+		return { false, connect_error };
 	}
-	if (!redis_client_->is_connected())
-	{
-		auto [connected, connect_error] = redis_client_->connect();
-		if (!connected)
-		{
-			auto message = connect_error.has_value() ? connect_error : std::optional<std::string>("failed to connect redis");
-			return { false, message };
-		}
-	}
+
 	auto [success, error_message] = redis_client_->set(key, value, ttl_seconds);
+
+	// If operation failed due to connection issue, try one more time after reconnection
+	if (!success && error_message.has_value() &&
+		(error_message.value().find("connection") != std::string::npos ||
+		 error_message.value().find("timeout") != std::string::npos))
+	{
+		Logger::handle().write(LogTypes::Warning,
+			fmt::format("Redis SET operation failed, attempting reconnection: {}", error_message.value()));
+
+		auto [reconnected, reconnect_error] = ensure_redis_connection();
+		if (reconnected)
+		{
+			return redis_client_->set(key, value, ttl_seconds);
+		}
+		return { false, reconnect_error };
+	}
+
 	return { success, error_message };
 }
 
 auto CacheDBService::get_key_value(const std::string& key) -> std::tuple<std::optional<std::string>, std::optional<std::string>>
 {
-	if (redis_client_ == nullptr)
+	auto [connected, connect_error] = ensure_redis_connection();
+	if (!connected)
 	{
-		return { std::nullopt, std::optional<std::string>("Redis client is null") };
+		return { std::nullopt, connect_error };
 	}
-	if (!redis_client_->is_connected())
+
+	auto [value, error_message] = redis_client_->get(key);
+
+	// If operation failed due to connection issue, try one more time after reconnection
+	if (!value.has_value() && error_message.has_value() &&
+		(error_message.value().find("connection") != std::string::npos ||
+		 error_message.value().find("timeout") != std::string::npos))
 	{
-		auto [connected, connect_error] = redis_client_->connect();
-		if (!connected)
+		Logger::handle().write(LogTypes::Warning,
+			fmt::format("Redis GET operation failed, attempting reconnection: {}", error_message.value()));
+
+		auto [reconnected, reconnect_error] = ensure_redis_connection();
+		if (reconnected)
 		{
-			auto message = connect_error.has_value() ? connect_error : std::optional<std::string>("failed to connect redis");
-			return { std::nullopt, message };
+			return redis_client_->get(key);
 		}
+		return { std::nullopt, reconnect_error };
 	}
-	return redis_client_->get(key);
+
+	return { value, error_message };
 }
 
 auto CacheDBService::enqueue_database_operation(const std::string& json_body) -> std::tuple<bool, std::optional<std::string>>

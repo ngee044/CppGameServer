@@ -35,6 +35,8 @@ Configurations::Configurations(ArgumentParser&& arguments)
 	, redis_block_ms_(1000)
 	, redis_count_(50)
 	, redis_auto_create_group_(true)
+	, redis_reconnect_max_retries_(10)
+	, redis_reconnect_interval_ms_(1000)
 	, rabbit_mq_host_("127.0.0.1")
 	, rabbit_mq_port_(5672)
 	, rabbit_mq_user_name_("guest")
@@ -42,6 +44,8 @@ Configurations::Configurations(ArgumentParser&& arguments)
 	, rabbit_channel_id_(1)
 	, publish_queue_name_("db.write")
 	, content_type_("application/json")
+	, rabbit_mq_reconnect_max_retries_(10)
+	, rabbit_mq_reconnect_interval_ms_(1000)
 	, publish_to_main_db_service_interval_ms_(1000)
 {
 	root_path_ = arguments.program_folder();
@@ -117,6 +121,16 @@ auto Configurations::publish_to_main_db_service_interval_ms() const -> int
 	return publish_to_main_db_service_interval_ms_;
 }
 
+auto Configurations::redis_reconnect_max_retries() const -> int
+{
+	return redis_reconnect_max_retries_;
+}
+
+auto Configurations::redis_reconnect_interval_ms() const -> int
+{
+	return redis_reconnect_interval_ms_;
+}
+
 auto Configurations::rabbit_mq_host() const -> std::string
 {
 	return rabbit_mq_host_;
@@ -150,6 +164,16 @@ auto Configurations::publish_queue_name() const -> std::string
 auto Configurations::content_type() const -> std::string
 {
 	return content_type_;
+}
+
+auto Configurations::rabbit_mq_reconnect_max_retries() const -> int
+{
+	return rabbit_mq_reconnect_max_retries_;
+}
+
+auto Configurations::rabbit_mq_reconnect_interval_ms() const -> int
+{
+	return rabbit_mq_reconnect_interval_ms_;
 }
 
 auto Configurations::load() -> void
@@ -249,6 +273,14 @@ auto Configurations::load() -> void
 	{
 		publish_to_main_db_service_interval_ms_ = static_cast<int>(obj.at("publish_to_main_db_service_interval_ms").as_int64());
 	}
+	if (obj.contains("redis_reconnect_max_retries"))
+	{
+		redis_reconnect_max_retries_ = static_cast<int>(obj.at("redis_reconnect_max_retries").as_int64());
+	}
+	if (obj.contains("redis_reconnect_interval_ms"))
+	{
+		redis_reconnect_interval_ms_ = static_cast<int>(obj.at("redis_reconnect_interval_ms").as_int64());
+	}
 
 	// MQ
 	if (obj.contains("rabbit_mq_host"))
@@ -278,6 +310,14 @@ auto Configurations::load() -> void
 	if (obj.contains("content_type"))
 	{
 		content_type_ = obj.at("content_type").as_string().data();
+	}
+	if (obj.contains("rabbit_mq_reconnect_max_retries"))
+	{
+		rabbit_mq_reconnect_max_retries_ = static_cast<int>(obj.at("rabbit_mq_reconnect_max_retries").as_int64());
+	}
+	if (obj.contains("rabbit_mq_reconnect_interval_ms"))
+	{
+		rabbit_mq_reconnect_interval_ms_ = static_cast<int>(obj.at("rabbit_mq_reconnect_interval_ms").as_int64());
 	}
 }
 
@@ -360,6 +400,14 @@ auto Configurations::parse(ArgumentParser& arguments) -> void
 	{
 		publish_to_main_db_service_interval_ms_ = v.value();
 	}
+	if (auto v = arguments.to_int("--redis_reconnect_max_retries"); v != std::nullopt)
+	{
+		redis_reconnect_max_retries_ = v.value();
+	}
+	if (auto v = arguments.to_int("--redis_reconnect_interval_ms"); v != std::nullopt)
+	{
+		redis_reconnect_interval_ms_ = v.value();
+	}
 
 	// MQ
 	if (auto v = arguments.to_string("--rabbit_mq_host"); v != std::nullopt)
@@ -389,6 +437,14 @@ auto Configurations::parse(ArgumentParser& arguments) -> void
 	if (auto v = arguments.to_string("--content_type"); v != std::nullopt)
 	{
 		content_type_ = v.value();
+	}
+	if (auto v = arguments.to_int("--rabbit_mq_reconnect_max_retries"); v != std::nullopt)
+	{
+		rabbit_mq_reconnect_max_retries_ = v.value();
+	}
+	if (auto v = arguments.to_int("--rabbit_mq_reconnect_interval_ms"); v != std::nullopt)
+	{
+		rabbit_mq_reconnect_interval_ms_ = v.value();
 	}
 }
 // Thread pool getters

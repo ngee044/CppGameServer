@@ -38,6 +38,8 @@ protected:
 	auto destroy_thread_pool() -> void;
 	auto ensure_stream_group() -> std::tuple<bool, std::optional<std::string>>;
 	auto publish_message(const std::string& message_body) -> std::tuple<bool, std::optional<std::string>>;
+	auto ensure_redis_connection() -> std::tuple<bool, std::optional<std::string>>;
+	auto ensure_rabbitmq_connection() -> std::tuple<bool, std::optional<std::string>>;
 
 private:
 	std::shared_ptr<Configurations> configurations_;

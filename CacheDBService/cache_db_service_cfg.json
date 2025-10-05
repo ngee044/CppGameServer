@@ -16,6 +16,8 @@
 	"redis_count": 50,
 	"redis_auto_create_group": true,
 	"publish_to_main_db_service_interval_ms": 1000,
+	"redis_reconnect_max_retries": 10,
+	"redis_reconnect_interval_ms": 1000,
 	"high_priority_count": 3,
 	"normal_priority_count": 3,
 	"low_priority_count": 5,
@@ -26,5 +28,7 @@
 	"rabbit_mq_password": "guest",
 	"rabbit_channel_id": 1,
 	"publish_queue_name": "db.write",
-	"content_type": "application/json"
+	"content_type": "application/json",
+	"rabbit_mq_reconnect_max_retries": 10,
+	"rabbit_mq_reconnect_interval_ms": 1000
 }
