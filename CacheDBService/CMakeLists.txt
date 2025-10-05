@@ -6,9 +6,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
 set(SOURCE_FILES
 	main.cpp
+	Configurations.cpp
+	CacheDBService.cpp
 )
 
 set (HEADER_FILES
+	Configurations.h
+	CacheDBService.h
 )
 
 project(${PROGRAM_NAME} VERSION 1.0.0.0)
