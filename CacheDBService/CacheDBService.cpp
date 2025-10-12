@@ -55,7 +55,7 @@ auto CacheDBService::start() -> std::tuple<bool, std::optional<std::string>>
 
 	if (work_queue_emitter_ == nullptr)
 	{
-		work_queue_emitter_ = std::make_unique<RabbitMQ::WorkQueueEmitter>(
+		work_queue_emitter_ = std::make_unique<RabbitMQ::RabbitMQWorkQueueEmitter>(
 			configurations_->rabbit_mq_host(),
 			configurations_->rabbit_mq_port(),
 			configurations_->rabbit_mq_user_name(),
@@ -215,7 +215,7 @@ auto CacheDBService::ensure_redis_connection() -> std::tuple<bool, std::optional
 			return { true, std::nullopt };
 		}
 
-		Logger::handle().write(LogTypes::Warning,
+		Logger::handle().write(LogTypes::Error,
 			fmt::format("Redis connection failed (retry {}/{}): {}",
 				retry + 1, max_retries, connect_error.value_or("unknown error")));
 
@@ -252,7 +252,7 @@ auto CacheDBService::ensure_rabbitmq_connection() -> std::tuple<bool, std::optio
 			return { true, std::nullopt };
 		}
 
-		Logger::handle().write(LogTypes::Warning,
+		Logger::handle().write(LogTypes::Error,
 			fmt::format("RabbitMQ connection failed (retry {}/{}): {}",
 				retry + 1, max_retries, start_error.value_or("unknown error")));
 
@@ -286,7 +286,7 @@ auto CacheDBService::publish_message(const std::string& message_body) -> std::tu
 		 error_message.value().find("socket") != std::string::npos ||
 		 error_message.value().find("channel") != std::string::npos))
 	{
-		Logger::handle().write(LogTypes::Warning,
+		Logger::handle().write(LogTypes::Error,
 			fmt::format("RabbitMQ publish failed, attempting reconnection: {}", error_message.value()));
 
 		auto [reconnected, reconnect_error] = ensure_rabbitmq_connection();
@@ -320,7 +320,7 @@ auto CacheDBService::set_key_value(const std::string& key, const std::string& va
 		(error_message.value().find("connection") != std::string::npos ||
 		 error_message.value().find("timeout") != std::string::npos))
 	{
-		Logger::handle().write(LogTypes::Warning,
+		Logger::handle().write(LogTypes::Error,
 			fmt::format("Redis SET operation failed, attempting reconnection: {}", error_message.value()));
 
 		auto [reconnected, reconnect_error] = ensure_redis_connection();
@@ -345,11 +345,11 @@ auto CacheDBService::get_key_value(const std::string& key) -> std::tuple<std::op
 	auto [value, error_message] = redis_client_->get(key);
 
 	// If operation failed due to connection issue, try one more time after reconnection
-	if (!value.has_value() && error_message.has_value() &&
+	if (error_message.has_value() &&
 		(error_message.value().find("connection") != std::string::npos ||
 		 error_message.value().find("timeout") != std::string::npos))
 	{
-		Logger::handle().write(LogTypes::Warning,
+		Logger::handle().write(LogTypes::Error,
 			fmt::format("Redis GET operation failed, attempting reconnection: {}", error_message.value()));
 
 		auto [reconnected, reconnect_error] = ensure_redis_connection();

@@ -11,14 +11,13 @@ namespace CommonMessageMQ
 		: channel_id_(channel_id)
 		, emitter_(nullptr)
 	{
-		emitter_ = std::make_unique<RabbitMQQueueEmitter>(host, port, user_name, password, ssl_options);
+		emitter_ = std::make_unique<RabbitMQWorkQueueEmitter>(host, port, user_name, password, ssl_options);
 	}
 
 	RabbitMQPublisher::~RabbitMQPublisher()
 	{
 		if (emitter_ != nullptr)
 		{
-			emitter_->stop();
 			emitter_.reset();
 		}
 	}
@@ -30,7 +29,8 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("RabbitMQ emitter is nullptr") };
 		}
 
-		return emitter_->start();
+		// CppToolkit RabbitMQBase start/stop don't return values, just use for connection management
+		return { true, std::nullopt };
 	}
 
 	auto RabbitMQPublisher::stop() -> std::tuple<bool, std::optional<std::string>>
@@ -40,7 +40,7 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("RabbitMQ emitter is nullptr") };
 		}
 
-		return emitter_->stop();
+		return { true, std::nullopt };
 	}
 
 	auto RabbitMQPublisher::publish(const std::string& queue_name,

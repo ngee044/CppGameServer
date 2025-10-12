@@ -13,14 +13,13 @@ namespace CommonMessageMQ
 		, heartbeat_(heartbeat)
 		, worker_(nullptr)
 	{
-		worker_ = std::make_unique<RabbitMQQueueWorker>(host, port, user_name, password, ssl_options);
+		worker_ = std::make_unique<RabbitMQWorkQueueConsume>(host, port, user_name, password, ssl_options);
 	}
 
 	RabbitMQConsumer::~RabbitMQConsumer()
 	{
 		if (worker_ != nullptr)
 		{
-			worker_->stop();
 			worker_.reset();
 		}
 	}
@@ -32,7 +31,7 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("RabbitMQ worker is nullptr") };
 		}
 
-		return worker_->start(heartbeat_);
+		return worker_->connect(heartbeat_);
 	}
 
 	auto RabbitMQConsumer::wait_stop() -> std::tuple<bool, std::optional<std::string>>
@@ -42,7 +41,8 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("RabbitMQ worker is nullptr") };
 		}
 
-		return worker_->wait_stop();
+		// CppToolkit RabbitMQBase doesn't have wait_stop, just return success
+		return { true, std::nullopt };
 	}
 
 	auto RabbitMQConsumer::stop() -> std::tuple<bool, std::optional<std::string>>
@@ -52,7 +52,11 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("RabbitMQ worker is nullptr") };
 		}
 
-		return worker_->stop();
+		worker_->stop_consume();
+		worker_->channel_close();
+		worker_->disconnect();
+
+		return { true, std::nullopt };
 	}
 
 	auto RabbitMQConsumer::subscribe(const std::string& queue_name,
@@ -70,6 +74,25 @@ namespace CommonMessageMQ
 
 		// RabbitMQ doesn't use consumer_group in the same way as Redis
 		// The queue_name itself acts as the consumer group mechanism
-		return worker_->subscribe(channel_id_, queue_name, task_callback, expired_callback);
+
+		auto [declred_name, error] = worker_->channel_open(channel_id_, queue_name);
+		if (error.has_value())
+		{
+			return { false, error };
+		}
+
+		auto [success1, error1] = worker_->prepare_consume();
+		if (!success1)
+		{
+			return { false, error1 };
+		}
+
+		auto [success2, error2] = worker_->register_consume(channel_id_, declred_name.value(), task_callback);
+		if (!success2)
+		{
+			return { false, error2 };
+		}
+
+		return worker_->start_consume();
 	}
 }

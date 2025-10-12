@@ -1,7 +1,7 @@
 #pragma once
 
 #include "MessageQueueConsumer.h"
-#include "RabbitMQQueueWorker.h"
+#include "RabbitMQWorkQueueConsume.h"
 
 #include <memory>
 
@@ -36,6 +36,6 @@ namespace CommonMessageMQ
 	private:
 		int channel_id_;
 		int heartbeat_;
-		std::unique_ptr<RabbitMQQueueWorker> worker_;
+		std::unique_ptr<RabbitMQWorkQueueConsume> worker_;
 	};
 }

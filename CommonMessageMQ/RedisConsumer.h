@@ -1,7 +1,7 @@
 #pragma once
 
 #include "MessageQueueConsumer.h"
-#include "RedisQueueWorker.h"
+#include "RedisWorkQueueConsume.h"
 
 #include <memory>
 
@@ -32,6 +32,6 @@ namespace CommonMessageMQ
 			-> std::tuple<bool, std::optional<std::string>> override;
 
 	private:
-		std::unique_ptr<RedisQueueWorker> worker_;
+		std::unique_ptr<RedisWorkQueueConsume> worker_;
 	};
 }

@@ -2,7 +2,7 @@
 
 #include "Configurations.h"
 #include "RedisClient.h"
-#include "WorkQueueEmitter.h"
+#include "RabbitMQWorkQueueEmitter.h"
 #include "ThreadPool.h"
 #include "ThreadWorker.h"
 #include "Job.h"
@@ -44,7 +44,7 @@ protected:
 private:
 	std::shared_ptr<Configurations> configurations_;
     std::unique_ptr<Redis::RedisClient> redis_client_;
-    std::unique_ptr<RabbitMQ::WorkQueueEmitter> work_queue_emitter_;
+    std::unique_ptr<RabbitMQ::RabbitMQWorkQueueEmitter> work_queue_emitter_;
     std::shared_ptr<ThreadPool> thread_pool_;
 
     std::promise<void> stop_promise_;

@@ -9,7 +9,7 @@ using namespace RabbitMQ;
 MainDBService::MainDBService(std::shared_ptr<Configurations> configurations, std::shared_ptr<DbJobExecutor> executor)
 	: configurations_(configurations)
 	, executor_(executor)
-	, consumer_(std::make_shared<WorkQueueConsume>(configurations_->rabbit_mq_host(), configurations_->rabbit_mq_port(), configurations_->rabbit_mq_user_name(), configurations_->rabbit_mq_password()))
+	, consumer_(std::make_shared<RabbitMQWorkQueueConsume>(configurations_->rabbit_mq_host(), configurations_->rabbit_mq_port(), configurations_->rabbit_mq_user_name(), configurations_->rabbit_mq_password()))
 {
 }
 

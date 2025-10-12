@@ -1,7 +1,7 @@
 #pragma once
 
 #include "MessageQueuePublisher.h"
-#include "RabbitMQQueueEmitter.h"
+#include "RabbitMQWorkQueueEmitter.h"
 
 #include <memory>
 
@@ -37,6 +37,6 @@ namespace CommonMessageMQ
 
 	private:
 		int channel_id_;
-		std::unique_ptr<RabbitMQQueueEmitter> emitter_;
+		std::unique_ptr<RabbitMQWorkQueueEmitter> emitter_;
 	};
 }

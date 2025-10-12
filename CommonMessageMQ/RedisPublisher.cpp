@@ -8,14 +8,13 @@ namespace CommonMessageMQ
 								   int db_index)
 		: emitter_(nullptr)
 	{
-		emitter_ = std::make_unique<RedisQueueEmitter>(address, port, tls_options, db_index);
+		emitter_ = std::make_unique<RedisWorkQueueEmitter>(address, port, tls_options, db_index);
 	}
 
 	RedisPublisher::~RedisPublisher()
 	{
 		if (emitter_ != nullptr)
 		{
-			emitter_->stop();
 			emitter_.reset();
 		}
 	}
@@ -27,7 +26,7 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("Redis emitter is nullptr") };
 		}
 
-		return emitter_->start();
+		return { true, std::nullopt };
 	}
 
 	auto RedisPublisher::stop() -> std::tuple<bool, std::optional<std::string>>
@@ -37,7 +36,7 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("Redis emitter is nullptr") };
 		}
 
-		return emitter_->stop();
+		return { true, std::nullopt };
 	}
 
 	auto RedisPublisher::publish(const std::string& queue_name,

@@ -9,14 +9,13 @@ namespace CommonMessageMQ
 								 int db_index)
 		: worker_(nullptr)
 	{
-		worker_ = std::make_unique<RedisQueueWorker>(consumer_name, address, port, tls_options, db_index);
+		worker_ = std::make_unique<RedisWorkQueueConsume>(consumer_name, address, port, tls_options, db_index);
 	}
 
 	RedisConsumer::~RedisConsumer()
 	{
 		if (worker_ != nullptr)
 		{
-			worker_->stop();
 			worker_.reset();
 		}
 	}
@@ -28,7 +27,7 @@ namespace CommonMessageMQ
 			return { false, std::optional<std::string>("Redis worker is nullptr") };
 		}
 
-		return worker_->start();
+		return { true, std::nullopt };
 	}
 
 	auto RedisConsumer::wait_stop() -> std::tuple<bool, std::optional<std::string>>

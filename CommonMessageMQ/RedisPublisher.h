@@ -1,7 +1,7 @@
 #pragma once
 
 #include "MessageQueuePublisher.h"
-#include "RedisQueueEmitter.h"
+#include "RedisWorkQueueEmitter.h"
 
 #include <memory>
 
@@ -34,6 +34,6 @@ namespace CommonMessageMQ
 			-> std::tuple<bool, std::optional<std::string>> override;
 
 	private:
-		std::unique_ptr<RedisQueueEmitter> emitter_;
+		std::unique_ptr<RedisWorkQueueEmitter> emitter_;
 	};
 }
