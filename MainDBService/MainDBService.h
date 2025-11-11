@@ -2,7 +2,7 @@
 
 #include "Configurations.h"
 #include "DbJobExecutor.h"
-#include "WorkQueueConsume.h"
+#include "RabbitMQWorkQueueConsume.h"
 
 #include <optional>
 #include <string>
@@ -27,6 +27,6 @@ private:
 	std::shared_ptr<DbJobExecutor> executor_;
 
 
-	std::shared_ptr<WorkQueueConsume> consumer_;
+	std::shared_ptr<RabbitMQWorkQueueConsume> consumer_;
 };
 
